@@ -1,0 +1,190 @@
+﻿<UserControl x:Class="Falah.Client.CashierWinUI.Views.BackupView"
+             x:Name="Root"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:Falah.Client.CashierWinUI.Controls"
+             FlowDirection="RightToLeft">
+    <Grid Background="{ThemeResource ShellBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Padding="28,24,28,12" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+                <TextBlock Text="النسخ الاحتياطي" Style="{StaticResource PageTitleText}"/>
+                <TextBlock Text="إنشاء نسخ احتياطية والتحقق من سلامتها" Style="{StaticResource PageSubtitleText}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button Content="إنشاء نسخة الآن" MinHeight="44" Style="{StaticResource CtaButtonStyle}"
+                        IsEnabled="{Binding CanManage}" Command="{Binding CreateBackupCommand}"/>
+                <Button AutomationProperties.Name="تحديث" MinHeight="44" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding LoadCommand}">
+                    <FontIcon Glyph="&#xE72C;" FontSize="13"/>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!--
+            The one question this screen exists to answer: if the database were lost right now, how
+            much would go with it. A list of rows makes the reader work that out.
+        -->
+        <Border Grid.Row="1" Style="{StaticResource PageCardStyle}" Margin="28,0,28,12" Padding="18,14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="{Binding LastBackupHeadline}" Style="{StaticResource CardTitleText}"
+                           Foreground="{Binding IsBackupStale, Converter={StaticResource BoolToBrushConverter}, ConverterParameter=WarningBrush|TextPrimaryBrush}"/>
+                <TextBlock Text="{Binding LastBackupDetail}" Style="{StaticResource CaptionText}"
+                           Foreground="{ThemeResource TextMutedBrush}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding LastRestoreLine}" Style="{StaticResource CaptionText}" TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextMutedBrush}"
+                           Visibility="{Binding HasRestoreHistory, Converter={StaticResource BoolToVisibleConverter}}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Restore deliberately lives outside this screen - see BackupViewModel's doc comment. -->
+        <Border Grid.Row="2" Style="{StaticResource AlertBannerStyle}" Margin="28,0,28,12">
+            <TextBlock TextWrapping="Wrap">
+                <Run Text="الاستعادة غير متاحة من هذه الشاشة عمدًا: فهي العملية الوحيدة التي تمحو سجلات مالية مثبتة، ويحرسها السيرفر بسبب إلزامي وعبارة تأكيد حرفية واعتماد مدير وعدم وجود أي عملية جارية."/>
+            </TextBlock>
+        </Border>
+
+        <Border Grid.Row="3" Style="{StaticResource PageCardStyle}" Margin="28,0,28,24" Padding="0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Grid Style="{StaticResource TableHeaderRowStyle}" Padding="16,10">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="130"/>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="الملف" Style="{StaticResource TableHeaderText}"/>
+                        <TextBlock Grid.Column="1" Text="الحالة" Style="{StaticResource TableHeaderText}"/>
+                        <TextBlock Grid.Column="2" Text="نتيجة التحقق" Style="{StaticResource TableHeaderText}"/>
+                        <TextBlock Grid.Column="3" Text="إجراء" Style="{StaticResource TableHeaderText}"/>
+                    </Grid>
+                </Grid>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Backups}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="0,0,0,1" Padding="16,8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="130"/>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding FilePath, Converter={StaticResource FileNameConverter}}"
+                                                       Style="{StaticResource TableCellText}" TextWrapping="Wrap"
+                                                       ToolTipService.ToolTip="{Binding FilePath}"/>
+                                            <TextBlock Text="{Binding RequestedBy}" Style="{StaticResource CaptionText}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" CornerRadius="8" Padding="8,3" VerticalAlignment="Center"
+                                                HorizontalAlignment="Right"
+                                                Background="{Binding Status, Converter={StaticResource StatusToPillBrushConverter}}">
+                                            <TextBlock Text="{Binding Status, Converter={StaticResource GeneralStatusLabelConverter}}" Style="{StaticResource StatusPillText}"/>
+                                        </Border>
+                                        <TextBlock Grid.Column="2" Text="{Binding VerificationStatus, Converter={StaticResource GeneralStatusLabelConverter}}" Style="{StaticResource TableCellText}"
+                                                   Foreground="{ThemeResource TextMutedBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <Button Content="تحقق" MinHeight="44" FontSize="12"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Command="{Binding ElementName=Root, Path=DataContext.VerifyBackupCommand}" CommandParameter="{Binding}"/>
+                                            <Button Content="استعادة" MinHeight="44" FontSize="12"
+                                                    Style="{StaticResource DangerButtonStyle}"
+                                                    Command="{Binding ElementName=Root, Path=DataContext.OpenRestoreCommand}" CommandParameter="{Binding}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <StackPanel Grid.Row="1" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibleConverter}}">
+                    <ProgressRing IsActive="True" Width="36" Height="36"/>
+                    <TextBlock Text="جاري التحميل..." Style="{StaticResource MutedText}"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="380"
+                            Visibility="{Binding LoadError, Converter={StaticResource NullToCollapsedConverter}}">
+                    <TextBlock Text="{Binding LoadError}" Style="{StaticResource BodyText}" TextAlignment="Center" TextWrapping="Wrap"/>
+                    <Button Content="إعادة المحاولة" MinHeight="44" Style="{StaticResource PrimaryButtonStyle}"
+                            HorizontalAlignment="Center" Command="{Binding LoadCommand}"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="{Binding HasNoBackups, Converter={StaticResource BoolToVisibleConverter}}">
+                    <TextBlock Text="لا توجد نسخ احتياطية بعد" Style="{StaticResource SectionTitleText}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="أنشئ أول نسخة احتياطية وتحقق منها" Style="{StaticResource MutedText}"
+                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,40"
+                Background="{ThemeResource TextPrimaryBrush}" CornerRadius="12" Padding="18,12"
+                Visibility="{Binding ActionNote, Converter={StaticResource NullToCollapsedConverter}}">
+            <TextBlock Text="{Binding ActionNote}" Foreground="{ThemeResource CardBackgroundBrush}" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="440"/>
+        </Border>
+        <Border Grid.Row="3" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,40"
+                Background="{ThemeResource DangerBrush}" CornerRadius="12" Padding="18,12"
+                Visibility="{Binding ActionError, Converter={StaticResource NullToCollapsedConverter}}">
+            <TextBlock Text="{Binding ActionError}" Foreground="{ThemeResource AccentTextBrush}" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="440"/>
+        </Border>
+
+        <!-- Restore. Declared last so it layers above the page; a database restore discards every
+             transaction committed after the backup, so nothing here is a one-tap action. -->
+        <Grid Grid.RowSpan="4" Background="{ThemeResource OverlayBrush}"
+              Visibility="{Binding IsRestoreOpen, Converter={StaticResource BoolToVisibleConverter}}">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="20" Padding="24" MaxWidth="620" VerticalAlignment="Center"
+                    HorizontalAlignment="Center" Margin="24">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="14">
+                        <controls:ModalHeaderView Title="استعادة نسخة احتياطية" CloseCommand="{Binding CloseRestoreCommand}"/>
+                        <Border Background="{ThemeResource DangerBackgroundBrush}" CornerRadius="12" Padding="14,12">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="تحذير: الاستعادة تمحو كل ما سُجّل بعد تاريخ هذه النسخة."
+                                           Foreground="{ThemeResource DangerBrush}" FontWeight="Bold" TextWrapping="Wrap"/>
+                                <TextBlock Text="كل الطلبات والحركات المالية والورديات المسجَّلة بعد النسخة ستختفي نهائيًا. لن تُنفَّذ الاستعادة أثناء وجود عملية مالية قيد التنفيذ."
+                                           Foreground="{ThemeResource DangerBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="{Binding RestoreTarget.FilePath}" Style="{StaticResource TableCellText}" TextWrapping="Wrap"/>
+                        <TextBox Header="سبب الاستعادة" MinHeight="44" IsEnabled="{Binding CanSubmitRestore}"
+                                 Text="{Binding RestoreReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Header="{Binding RestorePhrasePrompt}" MinHeight="44" IsEnabled="{Binding CanSubmitRestore}"
+                                 Text="{Binding RestoreConfirmation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <PasswordBox Header="رمز المدير المخوّل" MinHeight="44" MaxLength="6"
+                                     IsEnabled="{Binding CanSubmitRestore}"
+                                     Visibility="{Binding RestoreNeedsApproval, Converter={StaticResource BoolToVisibleConverter}}"
+                                     Password="{Binding RestoreManagerPin, Mode=TwoWay}"/>
+                        <Border Background="{ThemeResource DangerBackgroundBrush}" CornerRadius="12" Padding="14,10"
+                                Visibility="{Binding RestoreError, Converter={StaticResource NullToCollapsedConverter}}">
+                            <TextBlock Text="{Binding RestoreError}" Foreground="{ThemeResource DangerBrush}"
+                                       FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        </Border>
+                        <Button Content="{Binding RestoreLabel}" MinHeight="52" HorizontalAlignment="Stretch"
+                                Style="{StaticResource DialogDestructiveButtonStyle}"
+                                IsEnabled="{Binding CanSubmitRestore}" Command="{Binding SubmitRestoreCommand}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

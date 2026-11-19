@@ -1,0 +1,440 @@
+﻿<UserControl x:Class="Falah.Client.CashierWinUI.Views.CashierView"
+             x:Name="Root"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="using:Falah.Client.CashierWinUI.Views"
+             xmlns:controls="using:Falah.Client.CashierWinUI.Controls"
+             FlowDirection="RightToLeft">
+    <!--
+        Deliberately a thin shell: the cart workspace and the product catalogue each live in their
+        own UserControl (CartPanelView / ProductCatalogueView) rather than inline here. The WinUI 3
+        XAML compiler (Microsoft.UI.Xaml.Markup.Compiler / XamlCompiler.exe, WindowsAppSDK 1.5)
+        crashes silently (exit code 1, zero diagnostic output on any stream, no event-log entry -
+        confirmed by direct invocation outside MSBuild too) whenever this single file contains BOTH
+        the cart's ItemsControl DataTemplate and the catalogue's GridView DataTemplate together, even
+        though each one alone compiles cleanly and the resources referenced are all present -
+        narrowed down through binary-search isolation of the file's sections. Splitting them into
+        separate files sidesteps the compiler bug entirely and is arguably better structure anyway.
+        Both child views inherit DataContext (this control's CashierViewModel) automatically.
+    -->
+    <Grid Background="{ThemeResource PosSurfaceBrush}">
+
+        <!-- ================= SHIFT NOT OPEN: prompt to open one before anything else works ================= -->
+        <Grid Background="{ThemeResource SurfaceBrush}"
+              Visibility="{Binding IsShiftOpen, Converter={StaticResource InverseBoolToVisibleConverter}}">
+            <Border Style="{StaticResource CardBorderStyle}" Width="420" Padding="32"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="افتح الوردية" Style="{StaticResource TitleText}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="أدخل الرصيد الافتتاحي بالجنيه لبدء العمل" Style="{StaticResource MutedText}"
+                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                    <TextBox AutomationProperties.Name="الرصيد الافتتاحي بالجنيه" IsEnabled="{Binding CanEditOperation}" Text="{Binding OpeningCashText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" InputScope="Number"
+                             FontSize="20" TextAlignment="Center" HorizontalAlignment="Stretch"/>
+                    <TextBlock Text="{Binding OpeningInheritedNote}" Style="{StaticResource CaptionText}" TextWrapping="Wrap" TextAlignment="Center"
+                               AutomationProperties.AutomationId="OpenShift_InheritedNote"
+                               Visibility="{Binding OpeningInheritedNote, Converter={StaticResource NullToCollapsedConverter}}"/>
+                    <TextBlock Text="{Binding OpenShiftError}" Foreground="{ThemeResource DangerBrush}" FontWeight="Bold"
+                               TextAlignment="Center" TextWrapping="Wrap"
+                               Visibility="{Binding OpenShiftError, Converter={StaticResource NullToCollapsedConverter}}"/>
+                    <Button Content="فتح الوردية" Style="{StaticResource CtaButtonStyle}"
+                            Command="{Binding OpenShiftCommand}" IsEnabled="{Binding CanOpenShift}" HorizontalAlignment="Stretch"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ================= MAIN POS WORKSPACE ================= -->
+        <Grid x:Name="WorkspaceGrid" Visibility="{Binding IsShiftOpen, Converter={StaticResource BoolToVisibleConverter}}" SizeChanged="OnWorkspaceSizeChanged">
+            <Grid.KeyboardAccelerators>
+                <KeyboardAccelerator Key="F2" Invoked="OnSearchAccelerator"/>
+                <KeyboardAccelerator Key="F3" Invoked="OnOperationsAccelerator"/>
+                <KeyboardAccelerator Key="F12" Invoked="OnCheckoutAccelerator"/>
+            </Grid.KeyboardAccelerators>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="CartColumn" Width="390"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <views:CartPanelView Grid.Column="0"/>
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- "Cashier Operations" entry point - deliberately NOT inside CartPanelView's order
+                     header (see that file's own comment history): a plain button + native MenuFlyout,
+                     no DataTemplate/ItemsControl here so it carries none of the XamlCompiler risk
+                     documented elsewhere in this file; the actual modals it opens live in
+                     CashierOperationsModalsView below, overlaying the whole screen like every other
+                     modal in this view. -->
+                <!-- The two operations a cashier reaches for most often are promoted to direct
+                     buttons; everything else stays one level down in the menu. They intentionally
+                     also appear in the menu, so there is exactly one complete list of operations
+                     rather than a split vocabulary the operator has to learn. -->
+                <Border Grid.Row="2" Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="0,1,0,0"
+                        IsHitTestVisible="{Binding CanEditOperation}">
+                    <Grid Padding="18,10" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="البحث عن طلب" MinHeight="44" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding OpenOrderLookupCommand}"/>
+                        <Button Content="مصروف" MinHeight="44" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding OpenAddExpenseCommand}"/>
+                    <Button AutomationProperties.Name="عمليات الكاشير" x:Name="CashierOperationsButton" MinHeight="44" AutomationProperties.AutomationId="CashierOperationsButton" Style="{StaticResource GhostButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE713;" FontSize="14"/>
+                            <TextBlock Text="عمليات الكاشير" FontSize="13" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_Expense" Text="تسجيل مصروف من الدرج" Command="{Binding OpenAddExpenseCommand}"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_SafeDrop" Text="إيداع بالخزنة (Safe Drop)" Command="{Binding OpenSafeDropCommand}"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_CashIn" Text="إيداع نقدي في الدرج" Command="{Binding OpenCashMovementCommand}" CommandParameter="cash_in"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_CashOut" Text="سحب نقدي من الدرج" Command="{Binding OpenCashMovementCommand}" CommandParameter="cash_out"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_CashCount" Text="رصيد الدرج المسجل" IsEnabled="{Binding CanViewDrawerBalance}" Command="{Binding OpenCashCountCommand}"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_OrderLookup" Text="البحث عن طلب / إعادة طباعة" Command="{Binding OpenOrderLookupCommand}"/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_CashDrawer" Text="فتح الدرج" Command="{Binding OpenCashDrawerDialogCommand}"/>
+                                <MenuFlyoutSeparator/>
+                                <MenuFlyoutItem AutomationProperties.AutomationId="Op_ShiftClose" Text="إغلاق الوردية" Command="{Binding OpenCloseShiftCommand}"/>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    </StackPanel>
+                    <!-- The keys are only worth showing because they exist; each one names the
+                         control it drives, in the order those controls sit on this bar. -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border Style="{StaticResource KeyCapBorderStyle}"><TextBlock Text="F2" Style="{StaticResource KeyCapText}"/></Border>
+                            <TextBlock Text="بحث" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextMutedBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border Style="{StaticResource KeyCapBorderStyle}"><TextBlock Text="F3" Style="{StaticResource KeyCapText}"/></Border>
+                            <TextBlock Text="عمليات الكاشير" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextMutedBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border Style="{StaticResource KeyCapBorderStyle}"><TextBlock Text="F12" Style="{StaticResource KeyCapText}"/></Border>
+                            <TextBlock Text="الدفع" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextMutedBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    </Grid>
+                </Border>
+
+                <views:CategoryStripView x:Name="CategoryStrip" Grid.Row="0"/>
+                <views:ProductCatalogueView Grid.Row="1"/>
+            </Grid>
+        </Grid>
+
+        <!-- ================= VARIANT PICKER MODAL ================= -->
+        <Grid Background="{ThemeResource OverlayBrush}" Visibility="{Binding IsVariantPickerOpen, Converter={StaticResource BoolToVisibleConverter}}">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="20" Padding="20" Width="420" MaxHeight="500"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"><ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="12">
+                    <controls:ModalHeaderView Title="{Binding VariantPickerProduct.Name}"
+                                              CloseCommand="{Binding CloseVariantPickerCommand}"/>
+                    <Border Background="{ThemeResource SuccessBackgroundBrush}" BorderBrush="{ThemeResource SuccessBrush}" BorderThickness="1" CornerRadius="10" Padding="10,8"
+                            Visibility="{Binding HasPendingOffer, Converter={StaticResource BoolToVisibleConverter}}">
+                        <TextBlock Text="{Binding PendingOfferBanner}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource SuccessTextBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Right"/>
+                    </Border>
+                    <ItemsControl ItemsSource="{Binding VariantPickerProduct.Variants}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                        Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,0,8"
+                                        Command="{Binding ElementName=Root, Path=DataContext.SelectVariantCommand}" CommandParameter="{Binding}" AutomationProperties.Name="{Binding Name}">
+                                    <!-- Same real-columns fix as the offer pill in ProductCatalogueView - two
+                                         overlapping HorizontalAlignment TextBlocks garble as soon as a variant
+                                         name is long enough to reach the price. -->
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Bold" TextWrapping="Wrap" TextAlignment="Right"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding PricePiastres, Converter={StaticResource PiastresToDisplayConverter}}"
+                                                   FontWeight="Black" Foreground="{ThemeResource BrandPrimaryBrush}" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer></Border>
+        </Grid>
+
+        <views:CheckoutView/>
+
+        <!-- ================= POST-CHECKOUT CONFIRMATION ================= -->
+        <Grid Background="{ThemeResource OverlayBrush}" Visibility="{Binding HasCheckoutResult, Converter={StaticResource BoolToVisibleConverter}}">
+            <!-- Center, not Stretch: the content here is a tick, an order number and a total, and
+                 stretching the card to its 680 maximum padded that out with a half-screen of empty
+                 white. MaxHeight stays so a pending-payment card with its extra actions still
+                 scrolls rather than overflowing a 768-high screen. -->
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="24" Padding="28" Width="380" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" MaxHeight="680"><ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14" HorizontalAlignment="Center">
+                    <Border Background="{ThemeResource SuccessBackgroundBrush}" CornerRadius="40" Width="72" Height="72">
+                        <TextBlock Text="✓" FontSize="34" Foreground="{ThemeResource SuccessTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="{Binding VoidCashToHandBackText}" TextWrapping="Wrap" TextAlignment="Center" FontWeight="Bold"
+                               Foreground="{ThemeResource WarningTextBrush}" Width="300"
+                               Visibility="{Binding VoidCashToHandBackText, Converter={StaticResource NullToCollapsedConverter}}"/>
+                    <TextBlock Text="{Binding CheckoutTitle}" Style="{StaticResource TitleText}" HorizontalAlignment="Center"/>
+                    <TextBlock HorizontalAlignment="Center" FontSize="13" Foreground="{ThemeResource TextMutedBrush}">
+                        <Run Text="رقم الطلب: "/><Run Text="{Binding LastCheckoutResult.OrderNumber}" FontWeight="Bold"/>
+                    </TextBlock>
+                    <TextBlock HorizontalAlignment="Center" FontSize="20" FontWeight="Black">
+                        <Run Text="{Binding LastCheckoutResult.TotalPiastres, Converter={StaticResource PiastresToDisplayConverter}}"/>
+                    </TextBlock>
+
+                    <!-- The sale is never failed for a printing problem, so this is the only thing
+                         that distinguishes a ticket that reached the kitchen from one that never
+                         existed. Absent whenever printing worked. -->
+                    <Border Background="{ThemeResource WarningBackgroundBrush}" CornerRadius="12" Padding="14,10" Width="320"
+                            Visibility="{Binding HasPrintWarning, Converter={StaticResource BoolToVisibleConverter}}">
+                        <TextBlock Text="{Binding PrintWarningText}" TextWrapping="Wrap" TextAlignment="Center"
+                                   FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource WarningTextBrush}"/>
+                    </Border>
+
+                    <!-- Pending InstaPay/wallet claim: not paid yet, needs a follow-up confirm once the
+                         money actually arrives, or a cancel if it never does - see
+                         CashierViewModel.Checkout.cs's ConfirmElectronicPaymentAsync/CancelPendingElectronicPaymentAsync. -->
+                    <StackPanel Spacing="10" Width="300" Visibility="{Binding IsElectronicPaymentPending, Converter={StaticResource BoolToVisibleConverter}}">
+                        <Border Background="{ThemeResource WarningBackgroundBrush}" BorderBrush="{ThemeResource WarningBrush}" BorderThickness="1" CornerRadius="10" Padding="10,8">
+                            <TextBlock Text="دفع إلكتروني معلّق - أكّد بعد استلام المبلغ فعليًا، أو ألغِ الطلب إذا لم يصل."
+                                       Foreground="{ThemeResource WarningTextBrush}" FontWeight="Bold" TextWrapping="Wrap" TextAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="{Binding PendingPaymentActionError}" Foreground="{ThemeResource DangerBrush}" FontWeight="Bold"
+                                   TextAlignment="Center" TextWrapping="Wrap" Visibility="{Binding PendingPaymentActionError, Converter={StaticResource NullToCollapsedConverter}}"/>
+                        <Button Content="تأكيد استلام المبلغ" Style="{StaticResource SuccessButtonStyle}" HorizontalAlignment="Stretch"
+                                IsEnabled="{Binding CanConfirmPendingPayment}" Command="{Binding ConfirmElectronicPaymentCommand}"/>
+                        <TextBox IsEnabled="{Binding CanEditOperation}" PlaceholderText="سبب الإلغاء" Text="{Binding CancelPendingReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <!-- Required before cancelling: checkout already took the ingredients out of stock. -->
+                        <TextBlock Text="هل تم تحضير الطلب؟" FontWeight="SemiBold" TextAlignment="Center"/>
+                        <RadioButton GroupName="CancelPendingFood" Content="تم التحضير — يُسجَّل هالكًا" IsEnabled="{Binding CanEditOperation}"
+                                     IsChecked="{Binding IsCancelFoodPrepared, Mode=TwoWay}"/>
+                        <RadioButton GroupName="CancelPendingFood" Content="لم يُحضَّر — تعود الخامات للمخزون" IsEnabled="{Binding CanEditOperation}"
+                                     IsChecked="{Binding IsCancelFoodNotPrepared, Mode=TwoWay}"/>
+                        <Button Content="إلغاء الطلب المعلّق" Style="{StaticResource DangerButtonStyle}" HorizontalAlignment="Stretch"
+                                IsEnabled="{Binding CanCancelPendingPayment}" Command="{Binding CancelPendingElectronicPaymentCommand}"/>
+                    </StackPanel>
+
+                    <Button Content="متابعة العمل — مراجعة التحويل لاحقاً" Command="{Binding DismissCheckoutResultCommand}" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Stretch" Visibility="{Binding IsElectronicPaymentPending, Converter={StaticResource BoolToVisibleConverter}}"/>
+                    <Button Content="طلب جديد" Style="{StaticResource CtaButtonStyle}" HorizontalAlignment="Stretch"
+                            Command="{Binding DismissCheckoutResultCommand}"
+                            Visibility="{Binding IsElectronicPaymentPending, Converter={StaticResource InverseBoolToVisibleConverter}}"/>
+                </StackPanel>
+            </ScrollViewer></Border>
+        </Grid>
+
+        <!-- ================= CLOSE SHIFT MODAL ================= -->
+        <Grid Background="{ThemeResource OverlayBrush}" Visibility="{Binding IsCloseShiftOpen, Converter={StaticResource BoolToVisibleConverter}}">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="24" Padding="24" Width="420" MaxHeight="640"
+                    HorizontalAlignment="Center" VerticalAlignment="Stretch" Margin="24"><ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14">
+                    <controls:ModalHeaderView Title="إغلاق الوردية" CloseCommand="{Binding CancelCloseShiftCommand}"/>
+
+                    <!-- STEP 1: blind count - the server's expected figure is never shown until
+                         after this is submitted, matching the reference app's blind-close design. -->
+                    <StackPanel Spacing="10" Visibility="{Binding IsCloseShiftCounting, Converter={StaticResource BoolToVisibleConverter}}">
+                        <TextBlock Text="عدّ الدرج فعليًا ثم أدخل المبلغ بالجنيه - سيظهر المتوقع بعد ذلك مباشرة."
+                                   Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+                        <TextBox AutomationProperties.Name="النقدية المعدودة بالجنيه" IsEnabled="{Binding CanEditOperation}" AutomationProperties.AutomationId="CloseShift_ActualCash" Text="{Binding CloseShiftActualCashText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" InputScope="Number"
+                                 FontSize="20" TextAlignment="Center"/>
+                        <TextBlock Text="{Binding CloseShiftError}" Foreground="{ThemeResource DangerBrush}" FontWeight="Bold"
+                                   TextAlignment="Center" TextWrapping="Wrap"
+                                   Visibility="{Binding CloseShiftError, Converter={StaticResource NullToCollapsedConverter}}"/>
+                        <Button AutomationProperties.AutomationId="CloseShift_Prepare" Content="متابعة" Style="{StaticResource CtaButtonStyle}" HorizontalAlignment="Stretch"
+                                Command="{Binding PrepareCloseShiftCommand}"/>
+                    </StackPanel>
+
+                    <!-- STEP 2: confirm - expected/actual/difference, a reason, and (only when the
+                         difference exceeds the server's threshold) a manager PIN. -->
+                    <StackPanel Spacing="10" Visibility="{Binding CloseShiftPreview, Converter={StaticResource NullToCollapsedConverter}}">
+                        <Border Background="{ThemeResource NeutralBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
+                            <StackPanel Spacing="8">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="المتوقع:" FontWeight="Bold" HorizontalAlignment="Right"/>
+                                    <TextBlock Grid.Column="1" HorizontalAlignment="Left"
+                                               Text="{Binding CloseShiftPreview.ExpectedCashPiastres, Converter={StaticResource PiastresToDisplayConverter}}"/>
+                                </Grid>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="الفعلي المعدود:" FontWeight="Bold" HorizontalAlignment="Right"/>
+                                    <TextBlock Grid.Column="1" HorizontalAlignment="Left"
+                                               Text="{Binding CloseShiftPreview.ActualCashPiastres, Converter={StaticResource PiastresToDisplayConverter}}"/>
+                                </Grid>
+                                <Border Height="1" Background="{ThemeResource CardBorderBrush}"/>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="الفارق:" FontWeight="ExtraBold" HorizontalAlignment="Right"/>
+                                    <TextBlock Grid.Column="1" FontSize="18" FontWeight="Black" HorizontalAlignment="Left"
+                                               Text="{Binding CloseShiftPreview.DifferencePiastres, Converter={StaticResource PiastresToDisplayConverter}}"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBox IsEnabled="{Binding CanEditOperation}" PlaceholderText="سبب الفارق (اختياري إن كان ضمن الحد المسموح)"
+                                 Text="{Binding CloseShiftReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+
+                        <!-- Physical handover: counted = left in the drawer + handed to the receiver. -->
+                        <Border Background="{ThemeResource NeutralBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="التسليم" FontWeight="Bold" Foreground="{ThemeResource TextPrimaryBrush}"/>
+                                <TextBox Header="عهدة تُترك في الدرج للوردية التالية (ج)" IsEnabled="{Binding CanEditOperation}"
+                                         AutomationProperties.Name="عهدة تُترك في الدرج للوردية التالية" AutomationProperties.AutomationId="CloseShift_Retained"
+                                         Text="{Binding CloseShiftRetainedText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" InputScope="Number"/>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="يُسلَّم للمسؤول:" FontWeight="Bold" HorizontalAlignment="Right"/>
+                                    <TextBlock Grid.Column="1" HorizontalAlignment="Left" FontWeight="Bold" AutomationProperties.AutomationId="CloseShift_HandedOver"
+                                               Text="{Binding CloseShiftHandedOverText}"/>
+                                </Grid>
+                                <ComboBox Header="المستلم" PlaceholderText="اختر المسؤول الذي استلم النقدية" HorizontalAlignment="Stretch"
+                                          IsEnabled="{Binding CanEditOperation}" AutomationProperties.AutomationId="CloseShift_Receiver"
+                                          ItemsSource="{Binding HandoverReceivers}" SelectedItem="{Binding SelectedHandoverReceiver, Mode=TwoWay}" DisplayMemberPath="Name"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Spacing="8" Visibility="{Binding CloseShiftNeedsApproval, Converter={StaticResource BoolToVisibleConverter}}">
+                            <TextBlock Text="الفارق يتجاوز الحد المسموح - السبب أعلاه إلزامي، وأدخل رمز المدير المخوّل باعتماد الإغلاق."
+                                       Foreground="{ThemeResource DangerBrush}" FontWeight="Bold" TextWrapping="Wrap"/>
+                            <PasswordBox IsEnabled="{Binding CanEditOperation}" Password="{Binding CloseShiftManagerPin, Mode=TwoWay}"
+                                     PlaceholderText="رمز المدير" FontSize="18"/>
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding CloseShiftError}" Foreground="{ThemeResource DangerBrush}" FontWeight="Bold"
+                                   TextAlignment="Center" TextWrapping="Wrap"
+                                   Visibility="{Binding CloseShiftError, Converter={StaticResource NullToCollapsedConverter}}"/>
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="رجوع" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Stretch"
+                                    Command="{Binding BackToCloseShiftCountCommand}"/>
+                            <Button Grid.Column="1" AutomationProperties.AutomationId="CloseShift_Confirm" Content="تأكيد الإغلاق" Style="{StaticResource CtaButtonStyle}" HorizontalAlignment="Stretch"
+                                    Command="{Binding ConfirmCloseShiftCommand}"/>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer></Border>
+        </Grid>
+
+        <!-- ================= ADD EXPENSE MODAL ================= -->
+        <!-- Drawer-only by design - see CashierViewModel.Expense.cs's own doc comment for why a
+             main-treasury expense has no place in this client. -->
+        <Grid Background="{ThemeResource OverlayBrush}" Visibility="{Binding IsAddExpenseOpen, Converter={StaticResource BoolToVisibleConverter}}">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="24" Padding="24" Width="420" MaxHeight="640"
+                    HorizontalAlignment="Center" VerticalAlignment="Stretch" Margin="24"><ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14">
+                    <controls:ModalHeaderView Title="تسجيل مصروف من الدرج" CloseCommand="{Binding CancelAddExpenseCommand}"/>
+
+                    <!-- Two fixed rows rather than a wrapping panel - this WindowsAppSDK version's
+                         XamlCompiler has a documented history of crashing silently on unusual
+                         constructs (see CashierView.xaml.cs's own doc comment), and this project has
+                         never used WrapPanel anywhere; a plain Grid is the one layout shape already
+                         proven to compile and render correctly throughout this app. -->
+                    <!-- The seven categories are the reference app's own ExpensesScreen options,
+                         value-for-value (features/expenses/ExpensesScreen.tsx). The stored VALUE and
+                         the displayed LABEL genuinely differ for three of them there, and that
+                         distinction is preserved here: reports group by the stored value, so
+                         "simplifying" these strings would silently split historical expense
+                         reporting across two vocabularies. -->
+                    <TextBlock Text="الفئة" Style="{StaticResource MutedText}" HorizontalAlignment="Right"/>
+                    <Grid ColumnSpacing="6" RowSpacing="6">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Button Grid.Row="0" Grid.Column="0" Content="مستلزمات تشغيل (غير الخامات)" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="مستلزمات تشغيل"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=مستلزمات تشغيل|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=مستلزمات تشغيل|AccentTextBrush|TextPrimaryBrush}"/>
+                        <Button Grid.Row="0" Grid.Column="1" Content="غاز وفحم وشواية" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="غاز وفحم"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=غاز وفحم|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=غاز وفحم|AccentTextBrush|TextPrimaryBrush}"/>
+                        <!-- Ingredients and packaging are stock: bought through Purchasing so they enter the
+                             inventory at their cost, never as an expense (ExpenseCategories, owner's decision). -->
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="الخامات والتغليف تُشترى من شاشة المشتريات" Style="{StaticResource CaptionText}"
+                                   TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Row="1" Grid.Column="1" Content="نظافة ومطهرات" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="نظافة ومطهرات"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=نظافة ومطهرات|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=نظافة ومطهرات|AccentTextBrush|TextPrimaryBrush}"/>
+                        <Button Grid.Row="2" Grid.Column="0" Content="مواصلات وبنزين" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="مواصلات ودليفري"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=مواصلات ودليفري|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=مواصلات ودليفري|AccentTextBrush|TextPrimaryBrush}"/>
+                        <Button Grid.Row="2" Grid.Column="1" Content="صيانة سريعة وأدوات" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="صيانة سريعة"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=صيانة سريعة|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=صيانة سريعة|AccentTextBrush|TextPrimaryBrush}"/>
+                        <Button Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Content="نثريات أخرى" Style="{StaticResource SecondaryButtonStyle}" MinHeight="44" FontSize="12"
+                                Command="{Binding SetExpenseCategoryCommand}" CommandParameter="أخرى"
+                                Background="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=أخرى|ActionBlueBrush|CardBackgroundBrush}"
+                                Foreground="{Binding ExpenseCategory, Converter={StaticResource StringEqualsToBrushConverter}, ConverterParameter=أخرى|AccentTextBrush|TextPrimaryBrush}"/>
+                    </Grid>
+
+                    <TextBlock Text="المبلغ بالجنيه" Style="{StaticResource MutedText}" HorizontalAlignment="Right"/>
+                    <TextBox AutomationProperties.Name="مبلغ المصروف بالجنيه" IsEnabled="{Binding CanEditOperation}" AutomationProperties.AutomationId="Expense_Amount" Text="{Binding ExpenseAmountText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" InputScope="Number"
+                             FontSize="20" TextAlignment="Center"/>
+
+                    <TextBox IsEnabled="{Binding CanEditOperation}" AutomationProperties.AutomationId="Expense_Description" PlaceholderText="بيان المصروف" Text="{Binding ExpenseDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <StackPanel Spacing="8" Visibility="{Binding ExpenseNeedsApproval, Converter={StaticResource BoolToVisibleConverter}}">
+                        <TextBlock Text="صلاحيتك الحالية لا تسمح بصرف مصروف من الدرج - أدخل رمز المدير المخوّل باعتماد هذا المصروف."
+                                   Foreground="{ThemeResource DangerBrush}" FontWeight="Bold" TextWrapping="Wrap"/>
+                        <PasswordBox IsEnabled="{Binding CanEditOperation}" Password="{Binding ExpenseManagerPin, Mode=TwoWay}"
+                                 PlaceholderText="رمز المدير" FontSize="18"/>
+                    </StackPanel>
+
+                    <TextBlock Text="{Binding ExpenseError}" Foreground="{ThemeResource DangerBrush}" FontWeight="Bold"
+                               TextAlignment="Center" TextWrapping="Wrap"
+                               Visibility="{Binding ExpenseError, Converter={StaticResource NullToCollapsedConverter}}"/>
+
+                    <Button AutomationProperties.AutomationId="Expense_Submit" Content="تسجيل المصروف" Style="{StaticResource CtaButtonStyle}" HorizontalAlignment="Stretch"
+                            Command="{Binding SubmitExpenseCommand}"/>
+                </StackPanel>
+            </ScrollViewer></Border>
+        </Grid>
+
+        <!-- ================= CASHIER OPERATIONS MODALS (Safe Drop / Cash In-Out / Drawer / Count / Order Lookup) ================= -->
+        <views:CashierOperationsModalsView/>
+        <views:DeliveryDetailsView/>
+        <views:PickupDetailsView/>
+        <views:RefundView/>
+        <Grid Background="{ThemeResource OverlayBrush}" Visibility="{Binding IsClearCartOpen, Converter={StaticResource BoolToVisibleConverter}}">
+         <Border Style="{StaticResource CardBorderStyle}" Width="400" Padding="28" VerticalAlignment="Center" HorizontalAlignment="Center">
+          <StackPanel Spacing="18"><TextBlock Text="إلغاء الطلب الحالي؟" Style="{StaticResource TitleText}"/>
+           <TextBlock Text="سيتم حذف جميع الأصناف من هذا الطلب." TextWrapping="Wrap" Foreground="{ThemeResource TextMutedBrush}"/>
+           <Button Content="الاحتفاظ بالطلب" Command="{Binding CancelClearCartCommand}" Style="{StaticResource CtaButtonStyle}" HorizontalAlignment="Stretch"/>
+           <Button Content="نعم، إلغاء الطلب" Command="{Binding ConfirmClearCartCommand}" Style="{StaticResource GhostButtonStyle}" Foreground="{ThemeResource DangerBrush}" HorizontalAlignment="Stretch"/>
+          </StackPanel>
+         </Border>
+        </Grid>
+        <Border Background="{ThemeResource SurfaceBrush}" Padding="24" Visibility="{Binding IsInitializing, Converter={StaticResource BoolToVisibleConverter}}">
+         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16"><ProgressRing IsActive="{Binding IsInitializing}" Width="40" Height="40"/><TextBlock Text="جارٍ استعادة الوردية…" Style="{StaticResource BodyText}"/></StackPanel>
+        </Border>
+        <Border Background="{ThemeResource SurfaceBrush}" Visibility="{Binding SessionError, Converter={StaticResource NullToCollapsedConverter}}">
+         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16" MaxWidth="440"><TextBlock Text="تعذر استعادة الوردية" Style="{StaticResource TitleText}"/><TextBlock Text="{Binding SessionError}" TextWrapping="Wrap"/><Button Content="إعادة المحاولة" Command="{Binding InitializeCommand}" Style="{StaticResource CtaButtonStyle}"/></StackPanel>
+        </Border>
+
+        <!-- REC3: a kept request the server refused on retry. Last child, so it sits above any modal
+             (the recovered request reopens its own). The till never drops one by itself; the
+             operator checks and lets it go. -->
+        <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,12,0,0" MaxWidth="640"
+                Background="{ThemeResource WarningBackgroundBrush}" BorderBrush="{ThemeResource WarningBrush}" BorderThickness="1"
+                CornerRadius="12" Padding="16,12"
+                Visibility="{Binding HasRefusedRetry, Converter={StaticResource BoolToVisibleConverter}}"
+                AutomationProperties.AutomationId="Cashier.RefusedRetryBanner">
+            <StackPanel Spacing="8">
+                <TextBlock Text="عملية سابقة لم يصل تأكيدها تحتاج مراجعتك" FontWeight="Bold" Foreground="{ThemeResource WarningTextBrush}"/>
+                <TextBlock Text="{Binding RefusedRetryMessage}" TextWrapping="Wrap"/>
+                <TextBlock Text="الرفض يعني غالبًا أن العملية لم تُسجَّل. راجع قائمة الطلبات أو الدرج للتأكد، ثم تجاهلها لتكمل العمل - ولو كانت لازمة نفّذها من جديد."
+                           Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                <Button Content="تأكدت - تجاهل هذه العملية" HorizontalAlignment="Left" MinHeight="44"
+                        Style="{StaticResource WarningOutlineButtonStyle}" Command="{Binding DiscardRefusedRetriesCommand}"
+                        AutomationProperties.AutomationId="Cashier.DiscardRefusedRetry"/>
+            </StackPanel>
+        </Border>
+
+        <!-- UI-REQ-002: closing statement after closing the shift from the POS. -->
+        <views:ShiftStatementView Grid.RowSpan="10" Grid.ColumnSpan="10" DataContext="{Binding ShiftStatement}"/>
+    </Grid>
+</UserControl>

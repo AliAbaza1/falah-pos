@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <!-- Test-only: decodes the receipt's rendered QR back to text, so a code that looks right
+         but does not scan fails the build instead of reaching a customer's phone. -->
+    <PackageReference Include="ZXing.Net" Version="0.16.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <!-- Each test class creates/migrates real SQL databases. Bound suite pressure; the explicit
+         Task.WhenAll concurrency races inside individual tests retain their full concurrency. -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Falah.Server\Falah.Server.csproj" />
+    <ProjectReference Include="..\..\src\Falah.Infrastructure\Falah.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Falah.Application\Falah.Application.csproj" />
+    <ProjectReference Include="..\..\src\Falah.Domain\Falah.Domain.csproj" />
+    <ProjectReference Include="../../src/Falah.PrintAgent/Falah.PrintAgent.csproj" />
+  </ItemGroup>
+
+</Project>

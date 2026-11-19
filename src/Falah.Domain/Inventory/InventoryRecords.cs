@@ -1,0 +1,45 @@
+namespace Falah.Domain.Inventory;
+
+using Falah.Domain.Common;
+
+public enum CostSource { Purchase, Prep }
+
+/// <param name="EstimatedUnitCostPiastres">A cost the owner entered by hand, used only until a real
+/// purchase for this item exists. It lets a restaurant that has not yet recorded a single invoice
+/// still see an approximate food cost, without fabricating purchase invoices that would post
+/// supplier obligations and stock the restaurant never received. Null means genuinely unknown.</param>
+public sealed record InventoryItem(string Id, string Name, CostSource CostSource, long? EstimatedUnitCostPiastres = null);
+
+public enum RecipeLineKind { Direct, Yield, Packaging }
+
+/// <summary>One ingredient line of a menu recipe or a prep/batch recipe. A 'Yield' line's
+/// QuantityMilliUnits is a portion/piece COUNT (e.g. "4 falafel pieces"), not yet a milliUnit
+/// quantity of the ingredient's own unit - BaseQuantityMilliUnits resolves it back to a raw
+/// weight/volume via YieldUnitsPerBaseUnit.</summary>
+public sealed record RecipeLine(string InventoryItemId, long QuantityMilliUnits, RecipeLineKind Kind, long? YieldUnitsPerBaseUnit = null);
+
+public sealed record PrepRecipe(string Id, string OutputInventoryItemId, long OutputQuantityMilliUnits, bool Active);
+
+/// <summary>UsageReversal (always In) gives back the usage a checkout posted for an order that then
+/// did not happen - a cancelled unconfirmed electronic sale, an undelivered cash-on-delivery order.
+/// It is a separate type, not a Usage row with Direction In, because every usage total in this system
+/// sums Usage quantities as consumption; netting reversals out is done explicitly where usage is
+/// totalled.</summary>
+public enum StockMovementType { PurchaseReceipt, ManualReceipt, Usage, Waste, Spoilage, Breakage, CountAdjustment, UsageReversal, SupplierReturn }
+
+/// <summary>What happened to the food of an order that was voided after its checkout took the
+/// ingredients out of stock. Only the operator knows, so it is always their explicit choice (owner's
+/// decision): Prepared - cooked and thrown away, recorded as waste at cost; NotPrepared - never made,
+/// the ingredients go back into stock.</summary>
+public enum StockDisposition { Prepared, NotPrepared }
+
+public enum StockDirection { In, Out }
+
+/// <summary>QuantityMilliUnits/Direction default to 0/Out so every existing positional construction
+/// of this record (costing, which only ever needed Type/UnitCost/CreatedAtUtc) keeps compiling
+/// unchanged - added for InventoryRules' balance/variance functions, which need the full shape.</summary>
+public sealed record StockMovementFacts(
+    string InventoryItemId, StockMovementType Type, Money? UnitCost, DateTimeOffset CreatedAtUtc,
+    long QuantityMilliUnits = 0, StockDirection Direction = StockDirection.Out);
+
+public sealed record OrderPackagingRule(string OrderType, string InventoryItemId, long QuantityMilliUnits, bool Active);

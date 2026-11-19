@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Falah.PrintAgent</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The agent talks to the server over HTTP like every other client. It deliberately does NOT
+         reference Falah.Infrastructure: a station process must never hold a database connection. -->
+    <ProjectReference Include="..\Falah.Application\Falah.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Menu QR on the customer receipt. Used ONLY to compute the QR module matrix (MIT, pure
+         managed, no network). The renderer draws the modules itself as whole-dot squares, so the
+         code is exact on the 203-dpi head and never passes through GDI+ scaling or the text
+         stroke-thickening pass. -->
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <!-- windows-1256 and the other legacy Arabic codepages some ESC/POS firmwares need. -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <!-- The physical Xprinter's firmware has no Arabic code page at all (confirmed against its own
+         command manual - only USA/Europe, Greek, Hebrew, Farsi and East-Europe tables exist), and no
+         single-byte code page could shape Arabic correctly anyway (no contextual letter joining).
+         Rendering the ticket as a bitmap through Windows' own text layout and sending it as an
+         ESC/POS raster image is the only route to real Arabic on this hardware - Windows-only,
+         matching the "windows" transport this same package already exists for. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The restaurant logo for customer receipts (paper redesign 2026-11-17), made by tools/ReceiptLogo. -->
+    <EmbeddedResource Include="Assets\receipt-logo.png" LogicalName="Falah.PrintAgent.Assets.receipt-logo.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

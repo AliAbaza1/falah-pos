@@ -1,0 +1,105 @@
+namespace Falah.Infrastructure.Inventory;
+
+using Falah.Application.Inventory;
+using Falah.Domain.Authorization;
+using Falah.Domain.Common;
+using Falah.Infrastructure.Orders;
+using Falah.Infrastructure.Persistence;
+using Falah.Infrastructure.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
+
+/// <summary>
+/// Ported from saveRecipe: a "replace the whole line set" save, not incremental add/remove-line
+/// commands - a recipe editor naturally edits several lines then saves once. Idempotent by
+/// construction: re-applying the exact same save (same RequestId, so the same recipeId when
+/// creating and the same line ids either way) reproduces the exact same resulting rows, so unlike
+/// every financial/stock command in this codebase, no separate duplicate-submit guard is needed.
+/// Gated on menu_manage, matching the reference app - recipes are a menu-authoring concern, not an
+/// inventory one.
+/// </summary>
+public sealed class SaveRecipeHandler
+{
+    private readonly FalahDbContext _db;
+    private readonly IApprovalRegistry _approvalRegistry;
+
+    public SaveRecipeHandler(FalahDbContext db, IApprovalRegistry approvalRegistry)
+    {
+        _db = db;
+        _approvalRegistry = approvalRegistry;
+    }
+
+    public async Task<RecipeDto> HandleAsync(SaveRecipeRequest request, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new DomainException("اسم الوصفة مطلوب.");
+        if (string.IsNullOrEmpty(request.ProductId)) throw new DomainException("يجب اختيار الصنف المرتبط بالوصفة.");
+        if (request.Lines.Any(l => l.QuantityMilliUnits <= 0)) throw new DomainException("كمية كل مكوّن يجب أن تكون رقمًا صحيحًا أكبر من صفر.");
+        // An active recipe with no ingredients asserts that the dish is made of nothing. It is not -
+        // nobody has said yet what it is made of - and the food-cost report used to read the
+        // difference as a dish costing a known zero. Detaching a recipe is what Active=false does.
+        if (request.Active && request.Lines.Count == 0)
+            throw new DomainException("لا يمكن حفظ وصفة مفعّلة بدون مكوّنات. أضف مكوّنًا واحدًا على الأقل أو أوقف تفعيل الوصفة.");
+
+        var actorUser = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == request.ActorUserId, ct)
+            ?? throw new InvalidOperationException("المستخدم غير موجود.");
+        var actor = OrderMapper.ToActor(actorUser);
+
+        ManagerApproval? approval = null;
+        if (!string.IsNullOrEmpty(request.ManagerApprovalId))
+        {
+            var approverUser = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == request.ManagerApproverUserId, ct)
+                ?? throw new DomainException("المعتمد غير موجود.");
+            approval = new ManagerApproval(request.ManagerApprovalId, approverUser.Id, approverUser.Name,
+                approverUser.Role, DateTimeOffset.UtcNow, "menu_manage", null);
+        }
+        AuthorizationPolicy.AuthorizeCommand(_approvalRegistry, actor, "menu_manage", approval, requireApproval: true);
+
+        var recipeId = request.RecipeId ?? $"recipe-{request.RequestId}";
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await InventoryWriteLock.AcquireAsync(_db, ct);
+
+        var entity = await _db.Recipes.Include(r => r.Items).FirstOrDefaultAsync(r => r.Id == recipeId, ct);
+        if (entity is null)
+        {
+            entity = new RecipeEntity { Id = recipeId };
+            _db.Recipes.Add(entity);
+        }
+        else
+        {
+            _db.RecipeItems.RemoveRange(entity.Items);
+        }
+        entity.ProductId = request.ProductId;
+        entity.Name = request.Name.Trim();
+        entity.Active = request.Active;
+        entity.Items = request.Lines.Select((line, i) => new RecipeItemEntity
+        {
+            RecipeId = recipeId, InventoryItemId = line.InventoryItemId, QuantityMilliUnits = line.QuantityMilliUnits,
+            Kind = line.Kind, YieldUnitsPerBaseUnit = line.YieldUnitsPerBaseUnit,
+        }).ToList();
+
+        // Point the product back at its recipe.
+        //
+        // Costing resolves a sold line through Product.RecipeId (see
+        // ReportingQueryService.GetFoodCostReportAsync), while a recipe records the product it
+        // belongs to on itself. Saving only set the second, so a restaurant could enter every
+        // recipe it has and still be told its food cost was unknown, forever, with no error and
+        // nothing on screen to suggest what was missing. Found by entering a real menu's 99
+        // recipes and watching the margin stay blank.
+        //
+        // An INACTIVE recipe clears the link rather than leaving the product pointing at something
+        // deliberately switched off - that would silently keep costing from a retired recipe.
+        var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == request.ProductId, ct);
+        if (product is not null)
+        {
+            if (request.Active) product.RecipeId = recipeId;
+            else if (product.RecipeId == recipeId) product.RecipeId = null;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        return ToDto(entity);
+    }
+
+    private static RecipeDto ToDto(RecipeEntity entity) => new(entity.Id, entity.ProductId, entity.Name, entity.Active,
+        entity.Items.Select(i => new RecipeLineDto(i.InventoryItemId, i.QuantityMilliUnits, i.Kind, i.YieldUnitsPerBaseUnit)).ToList());
+}
